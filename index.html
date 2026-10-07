@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>AUDI FUTURE GARAGE — Cardboard VR</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:Arial,Helvetica,sans-serif;touch-action:none}
+#app{position:fixed;inset:0}
+#start{position:fixed;inset:0;z-index:10;background:radial-gradient(circle at 50% 45%,#20262d 0,#080a0d 55%,#000 100%);display:flex;align-items:center;justify-content:center;color:white;text-align:center}
+.panel{max-width:520px;padding:34px}.logo{letter-spacing:.28em;font-size:14px;opacity:.7;margin-bottom:30px}
+h1{font-size:42px;line-height:1.02;margin:0 0 14px;font-weight:500}
+p{color:#aeb6be;line-height:1.5}
+button{border:1px solid #9ca3aa;background:#f2f3f4;color:#090b0e;padding:15px 24px;border-radius:4px;font-weight:700;letter-spacing:.08em;margin-top:18px}
+.small{font-size:12px;color:#77808a;margin-top:18px}
+#cross{position:fixed;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);z-index:4;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:rgba(255,255,255,.8)}
+#cross:before{width:26px;height:1px;top:13px;left:0}#cross:after{height:26px;width:1px;left:13px;top:0}
+#hud{position:fixed;left:50%;top:8%;transform:translateX(-50%);z-index:3;color:#fff;text-align:center;pointer-events:none;text-shadow:0 2px 10px #000}
+#chapter{font-size:12px;letter-spacing:.18em;opacity:.7}.title{font-size:24px;margin-top:5px}
+#hint{position:fixed;bottom:7%;left:50%;transform:translateX(-50%);z-index:3;color:#fff;background:rgba(0,0,0,.45);padding:9px 14px;border-radius:20px;font-size:12px;white-space:nowrap}
+#score{position:fixed;top:4%;right:5%;z-index:3;color:#fff;font-size:12px;text-align:right;line-height:1.7}
+#finish{display:none;position:fixed;inset:0;z-index:8;background:rgba(0,0,0,.9);color:#fff;align-items:center;justify-content:center;text-align:center}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="start"><div class="panel">
+<div class="logo">AUDI FUTURE GARAGE</div>
+<h1>THE FUTURE<br>IS YOURS.</h1>
+<p>Esperienza immersiva progettata per Google Cardboard.<br>Inserisci lo smartphone nel visore dopo aver avviato l'esperienza.</p>
+<button id="go">ENTER CARDBOARD VR</button>
+<div class="small">Consigliato: Chrome Android · modalità orizzontale</div>
+</div></div>
+<div id="hud"><div id="chapter">CHAPTER 01</div><div class="title" id="title">THE LEGACY</div></div>
+<div id="score"></div>
+<div id="cross"></div>
+<div id="hint">Guarda un frammento per 1,5 s per selezionarlo</div>
+<div id="finish"><div class="panel"><div class="logo">AUDI CO-CREATOR ID</div><h1>YOUR FUTURE<br>HAS STARTED.</h1><p id="finalText"></p><button onclick="location.reload()">REPLAY</button></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+let scene,cameraL,cameraR,renderer,group,clock;
+let yaw=0,pitch=0,baseAlpha=0,baseBeta=0,baseGamma=0;
+let started=false,chapter=1,score=0,impact=0,selected=null,lastGaze=0;
+const W=()=>innerWidth,H=()=>innerHeight;
+
+const app=document.getElementById('app'), start=document.getElementById('start');
+document.getElementById('go').onclick=async()=>{
+  started=true; start.style.display='none';
+  if(screen.orientation?.lock){try{await screen.orientation.lock('landscape')}catch(e){}}
+  if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+    try{await DeviceOrientationEvent.requestPermission()}catch(e){}
+  }
+  window.addEventListener('deviceorientation',orientation,true);
+  document.documentElement.requestFullscreen?.().catch(()=>{});
+  init();
+};
+
+function orientation(e){
+  if(!started)return;
+  const a=(e.alpha||0)*Math.PI/180,b=(e.beta||0)*Math.PI/180,g=(e.gamma||0)*Math.PI/180;
+  // Cardboard-style head orientation, smoothed
+  const targetYaw=-(a-baseAlpha);
+  const targetPitch=-(b-baseBeta-Math.PI/2);
+  yaw += (targetYaw-yaw)*0.12;
+  pitch += (targetPitch-pitch)*0.12;
+}
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x030507);
+ scene.fog=new THREE.FogExp2(0x030507,.012);
+ cameraL=new THREE.PerspectiveCamera(75,W()/2/H(),.05,500);
+ cameraR=cameraL.clone();
+ renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.6)); renderer.setSize(W(),H());
+ app.appendChild(renderer.domElement);
+
+ group=new THREE.Group(); scene.add(group);
+ clock=new THREE.Clock();
+ buildLights(); buildTunnel(); buildFragments();
+ addEventListener('resize',resize);
+ animate();
+}
+
+function buildLights(){
+ scene.add(new THREE.AmbientLight(0x8899aa,1.5));
+ const p=new THREE.PointLight(0xffffff,40,40); p.position.set(0,2,4); scene.add(p);
+ const blue=new THREE.PointLight(0x4466ff,35,70); blue.position.set(0,2,-20); scene.add(blue);
+}
+
+function buildTunnel(){
+ const floor=new THREE.Mesh(new THREE.PlaneGeometry(18,180),new THREE.MeshStandardMaterial({color:0x090d12,metalness:.6,roughness:.4}));
+ floor.rotation.x=-Math.PI/2; floor.position.y=-2; floor.position.z=-55; group.add(floor);
+ for(let z=0;z>-150;z-=5){
+   const ring=new THREE.Mesh(new THREE.TorusGeometry(7.5,.035,8,64),new THREE.MeshBasicMaterial({color:0x9ba8b5,transparent:true,opacity:.32}));
+   ring.rotation.x=Math.PI/2; ring.position.z=z; group.add(ring);
+ }
+}
+
+const fragData=[
+ {name:"QUATTRO",z:-18,desc:"Rally · 1980s"},
+ {name:"LE MANS",z:-42,desc:"Performance · Efficiency"},
+ {name:"E-TRON",z:-66,desc:"Electrification"},
+ {name:"F1",z:-90,desc:"Future Motorsport"}
+];
+function buildFragments(){
+ fragData.forEach((d,i)=>{
+  const g=new THREE.Group();g.position.set((i%2?3:-3),0,d.z);g.userData=d;
+  const core=new THREE.Mesh(new THREE.IcosahedronGeometry(1,1),new THREE.MeshStandardMaterial({color:0xdfe5e9,metalness:.8,roughness:.18,emissive:0x222830}));
+  g.add(core);
+  const tor=new THREE.Mesh(new THREE.TorusGeometry(1.35,.025,8,48),new THREE.MeshBasicMaterial({color:0xb9c1c8}));
+  tor.rotation.x=Math.PI/2;g.add(tor);group.add(g);
+ });
+}
+
+function conceptCar(){
+ const car=new THREE.Group(); car.position.set(0,-1.2,-25);
+ const mat=new THREE.MeshStandardMaterial({color:0xc7ccd1,metalness:.9,roughness:.2});
+ const dark=new THREE.MeshStandardMaterial({color:0x10151b,metalness:.6,roughness:.25});
+ const body=new THREE.Mesh(new THREE.BoxGeometry(3.2,.55,6.2),mat);body.position.y=.65;car.add(body);
+ const cabin=new THREE.Mesh(new THREE.SphereGeometry(1.45,24,12,0,Math.PI*2,0,Math.PI/2),dark);cabin.scale.set(1,0.55,1.5);cabin.position.set(0,1.05,-.25);car.add(cabin);
+ [-1,1].forEach(x=>[-2,2].forEach(z=>{const w=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,.28,24),dark);w.rotation.z=Math.PI/2;w.position.set(x*1.55,.45,z);car.add(w)}));
+ const light=new THREE.Mesh(new THREE.BoxGeometry(2.5,.08,.06),new THREE.MeshBasicMaterial({color:0xe8f1ff}));light.position.set(0,.78,-3.1);car.add(light);
+ return car;
+}
+
+function setChapter(n){
+ chapter=n;
+ document.getElementById('chapter').textContent=`CHAPTER 0${n}`;
+ document.getElementById('title').textContent=n===1?'THE LEGACY':n===2?'CO-CREATION LAB':'GREEN LAP';
+ document.getElementById('hint').textContent=n===1?'Guarda un frammento per 1,5 s per selezionarlo':n===2?'Guarda la concept car per entrare nel laboratorio':'Guarda il circuito e vivi la Green Lap';
+}
+
+function finish(){
+ document.getElementById('finish').style.display='flex';
+ document.getElementById('finalText').innerHTML=`INNOVATION SCORE <b>${score}</b><br>IMPACT <b>${impact}%</b><br><br>La tua visione è diventata una possibile Audi del futuro.`;
+}
+
+let car=null,progress=0;
+function update(){
+ const t=clock.getElapsedTime();
+ // camera head rotation
+ cameraL.rotation.order='YXZ';cameraR.rotation.order='YXZ';
+ cameraL.rotation.y=yaw;cameraR.rotation.y=yaw;
+ cameraL.rotation.x=pitch;cameraR.rotation.x=pitch;
+ const ipd=.032; cameraL.position.x=-ipd;cameraR.position.x=ipd;
+ cameraL.position.y=1.6;cameraR.position.y=1.6;
+
+ group.children.forEach(o=>{
+  if(o.userData?.name){o.rotation.y+=.006;o.rotation.x=Math.sin(t+o.position.z)*.2}
+ });
+ if(chapter===1){
+   const target=group.children.find(o=>o.userData?.name && Math.abs(o.position.z - (-10-Math.floor(t/7)*20))<10);
+   if(target && Math.sin(t*.7)>0.92 && t-lastGaze>1.5){
+     score+=25;impact=Math.min(100,impact+8);lastGaze=t;target.scale.setScalar(1.4);
+   }
+   if(t>22)setChapter(2);
+ } else if(chapter===2){
+   if(!car){car=conceptCar();scene.add(car)}
+   car.position.z=-20+Math.sin(t*.4)*1.5; car.rotation.y=Math.sin(t*.3)*.15;
+   if(t>38)setChapter(3);
+ } else if(chapter===3){
+   if(car){car.position.z=0;car.position.x=Math.sin(t*.8)*2.5;car.rotation.y=Math.sin(t*.8)*.08}
+   progress+=.012; score+=.15; impact=Math.min(100,impact+.015);
+   if(progress>100)finish();
+ }
+ document.getElementById('score').innerHTML=`INNOVATION ${Math.round(score)}<br>IMPACT ${Math.round(impact)}%`;
+}
+
+function animate(){requestAnimationFrame(animate);update();renderStereo()}
+function renderStereo(){
+ const w=W(),h=H(),half=w/2;
+ renderer.setScissorTest(true);
+ renderer.setViewport(0,0,half,h);renderer.setScissor(0,0,half,h);renderer.render(scene,cameraL);
+ renderer.setViewport(half,0,half,h);renderer.setScissor(half,0,half,h);renderer.render(scene,cameraR);
+ renderer.setScissorTest(false);
+ // central divider
+ renderer.setScissorTest(false);
+}
+
+function resize(){
+ renderer.setSize(W(),H());
+ cameraL.aspect=(W()/2)/H();cameraR.aspect=(W()/2)/H();
+ cameraL.updateProjectionMatrix();cameraR.updateProjectionMatrix();
+}
+</script>
+</body>
+</html>
